@@ -5,7 +5,8 @@ pandas
 scikit-learn
 scipy
 websockets
+websocket-client
 flask
-vnstock==3.4.2
 qrcode
 pyotp
+vnstock==3.4.2
