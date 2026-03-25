@@ -1,0 +1,11 @@
+yfinance
+requests
+numpy
+pandas
+scikit-learn
+scipy
+websockets
+flask
+vnstock==3.4.2
+qrcode
+pyotp
