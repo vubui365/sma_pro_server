@@ -1075,8 +1075,9 @@ body.light{
     <div><div style="font-size:8px;color:var(--sub);font-weight:700;line-height:1">GOLD</div><div id="idx-GOLD-price" style="font-size:12px;font-weight:800;font-family:var(--mono);line-height:1.3">--</div></div>
     <div id="idx-GOLD-chg" style="font-size:10px;font-weight:700">--%</div>
   </div>
-  <div style="margin-left:auto;display:flex;align-items:center;padding:0 8px;flex-shrink:0">
+  <div style="margin-left:auto;display:flex;align-items:center;gap:4px;padding:0 8px;flex-shrink:0">
     <span id="idx-update-time" style="font-size:8px;color:var(--sub)"></span>
+    <button onclick="refreshIndexBanner(true)" title="Làm mới chỉ số" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--sub);padding:0 2px;opacity:.6;line-height:1">🔄</button>
   </div>
 </div>
 <div id="tabs">
@@ -9763,37 +9764,44 @@ window.addEventListener('resize', ()=>{
 // ═══════════════════════════════════════════════════════
 
 // ── Index Banner ──────────────────────────────────────
-async function refreshIndexBanner(){
-  // Đọc từ sd[] nếu user đã thêm indices vào watchlist
-  for(const sym of ['VNINDEX','VN30','HNX']){
-    const cached=typeof sd!=='undefined'&&sd[sym]
-    if(!cached||!cached.price) continue
-    const pe=document.getElementById(`idx-${sym}-price`),ce=document.getElementById(`idx-${sym}-chg`)
-    if(pe) pe.textContent=Math.round(cached.price).toLocaleString('vi')
-    if(ce){const chg=cached.chg||0;const col=chg>=0?'var(--green)':'var(--red)';ce.textContent=(chg>=0?'+':'')+chg.toFixed(2)+'%';ce.style.color=col}
+async function refreshIndexBanner(force=false){
+  const updateEl=(priceId,chgId,price,chg,isVN)=>{
+    const pe=document.getElementById(priceId),ce=document.getElementById(chgId)
+    if(pe&&price>0) pe.textContent=isVN?Math.round(price).toLocaleString('vi'):parseFloat(price).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
+    if(ce&&chg!=null){const c=parseFloat(chg),col=c>=0?'var(--green)':'var(--red)';ce.textContent=(c>=0?'+':'')+c.toFixed(2)+'%';ce.style.color=col}
   }
-  // Fetch tất cả từ /api/macro (VNINDEX/VN30/HNX + Gold + S&P500)
+  // Bước 1: cập nhật ngay từ sd[] nếu user thêm index vào watchlist
+  if(typeof sd!=='undefined'){
+    ;['VNINDEX','VN30','HNX'].forEach(sym=>{
+      const s=sd[sym]; if(s&&s.price>0) updateEl(`idx-${sym}-price`,`idx-${sym}-chg`,s.price,s.chg??0,true)
+    })
+    const spSd=sd['SPY']||sd['^GSPC']
+    if(spSd?.price>0) updateEl('idx-SPX-price','idx-SPX-chg',spSd.price,spSd.chg??0,false)
+    const gSd=sd['GC=F']||sd['XAUUSD']
+    if(gSd?.price>0) updateEl('idx-GOLD-price','idx-GOLD-chg',gSd.price,gSd.chg??0,false)
+  }
+  // Bước 2: fetch /api/macro (có auto-fetch VN từ DB nếu không có trong sd[])
   try{
+    if(force) await api('GET','/api/macro/refresh').catch(()=>null)
     const macro=await api('GET','/api/macro').catch(()=>null)
     if(!macro) return
-    const updateEl=(priceId,chgId,price,chg,isVN)=>{
-      const pe=document.getElementById(priceId),ce=document.getElementById(chgId)
-      if(pe&&price>0) pe.textContent=isVN?Math.round(price).toLocaleString('vi'):price.toLocaleString('en',{minimumFractionDigits:0,maximumFractionDigits:2})
-      if(ce&&chg!=null){const col=chg>=0?'var(--green)':'var(--red)';ce.textContent=(chg>=0?'+':'')+chg.toFixed(2)+'%';ce.style.color=col}
-    }
-    // VN Indices — from /api/macro structured data
     ;['VNINDEX','VN30','HNX'].forEach(sym=>{
-      const d=macro[sym]
-      if(d&&d.price>0) updateEl(`idx-${sym}-price`,`idx-${sym}-chg`,d.price,d.chg_pct,true)
-      else if(sd[sym]&&sd[sym].price>0) updateEl(`idx-${sym}-price`,`idx-${sym}-chg`,sd[sym].price,sd[sym].chg,true)
+      // Ưu tiên sd[] (realtime) nếu đã có
+      if(typeof sd!=='undefined'&&sd[sym]?.price>0) return
+      const d=macro[sym]; if(d&&d.price>0) updateEl(`idx-${sym}-price`,`idx-${sym}-chg`,d.price,d.chg_pct??0,true)
     })
-    // US: S&P500 — check multiple possible keys
-    const sp=macro['^GSPC']||macro['SPX']||macro['S&P500']||macro['SPY']
-    if(sp&&sp.price>0) updateEl('idx-SPX-price','idx-SPX-chg',sp.price||0,sp.chg_pct||0,false)
-    else if(sd['SPY']&&sd['SPY'].price>0) updateEl('idx-SPX-price','idx-SPX-chg',sd['SPY'].price,sd['SPY'].chg,false)
-    // Gold — GC=F ticker
+    // S&P500 — check nhiều key
+    const sp=macro['^GSPC']||macro['SPX']||macro['SPY']
+    if(sp?.price>0){
+      const hasSp=typeof sd!=='undefined'&&(sd['SPY']?.price>0||sd['^GSPC']?.price>0)
+      if(!hasSp) updateEl('idx-SPX-price','idx-SPX-chg',sp.price,sp.chg_pct??0,false)
+    }
+    // Gold — GC=F hoặc GOLD key
     const gold=macro['GC=F']||macro['GOLD']
-    if(gold&&gold.price>0) updateEl('idx-GOLD-price','idx-GOLD-chg',gold.price||0,gold.chg_pct||0,false)
+    if(gold?.price>0){
+      const hasGold=typeof sd!=='undefined'&&(sd['GC=F']?.price>0||sd['XAUUSD']?.price>0)
+      if(!hasGold) updateEl('idx-GOLD-price','idx-GOLD-chg',gold.price,gold.chg_pct??0,false)
+    }
   }catch(e){}
   const t=document.getElementById('idx-update-time');if(t)t.textContent=new Date().toLocaleTimeString('vi',{hour:'2-digit',minute:'2-digit'})
 }

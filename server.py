@@ -41,14 +41,14 @@ ENABLE_WEBSOCKET = True
 WS_PORT = 10000
 
 # ── CONFIGURATION ─────────────────────────────────────────────
-PORT = int(os.environ.get('PORT', 13499))
-BIND = "0.0.0.0"
+PORT = 11349
 VERSION = "Pro"
 ALERT_CD_1D=3600; ALERT_CD_MTF=14400; ALERT_CD_SL=7200; ALERT_CD_TP=7200
 ALERT_CD_VOL=3600; ALERT_CD_REGIME=7200
 WACC_VN_DEFAULT=0.12; WACC_US_DEFAULT=0.09
 DAILY_DIGEST_HOUR = 17   # giờ gửi digest (17:30 VN)
 DAILY_DIGEST_MIN  = 30
+BIND = "127.0.0.1"
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sma.db")
 OHLCV_BARS = 2000
 
@@ -4975,6 +4975,73 @@ def start_refresh():
                     # Pattern candle alert
                     try: _check_pattern_alerts(sym, mkt, data.get('history',[]))
                     except Exception: pass
+                    # Pre-breakout alert (confidence >= 60%)
+                    try:
+                        _br = detect_breakout_pre_alert(sym, mkt)
+                        if _br.get('is_breakout') and _br.get('confidence', 0) >= 60:
+                            _ok_br, _ = smart_alert_cooldown('prebreak_'+sym, 'PRE_BREAKOUT', ttl=14400)
+                            if _ok_br:
+                                _vn_br = (mkt == 'VN')
+                                _pv_br = data.get('price', 0)
+                                _fp_br = (str(round(_pv_br)) + 'd') if _vn_br else ('$'+str(round(_pv_br,2)))
+                                _conf = _br.get('confidence', 0)
+                                push_live_alert(sym, mkt, 'WARNING',
+                                    '⚡ Pre-breakout - ' + sym,
+                                    'Do tin cay ' + str(round(_conf)) + '% · Gia: ' + _fp_br + ' · ' + ', '.join((_br.get('reasons') or [])[:2]),
+                                    action='Xem chart ' + sym, price=_pv_br)
+                                _tok_br = get_setting('tg_token', '')
+                                if _tok_br:
+                                    _reasons_br = ', '.join((_br.get('reasons') or [])[:3])
+                                    _msg_br = ('⚡ PRE-BREAKOUT - ' + sym + ' (' + mkt + ')\n'
+                                               + 'Do tin cay: ' + str(round(_conf)) + '%\n'
+                                               + 'Gia: ' + _fp_br + '\n'
+                                               + ('Ly do: ' + _reasons_br if _reasons_br else ''))
+                                    threading.Thread(target=tg_send_to_subscribers, args=(sym, _msg_br), daemon=True).start()
+                    except Exception as _bre: log.debug('[pre-breakout alert] %s: %s', sym, _bre)
+                    # Smart money: ACCUMULATION / DISTRIBUTION alert
+                    try:
+                        _sm = analyze_smart_money(sym, mkt)
+                        if _sm and _sm.get('verdict') in ('ACCUMULATION', 'DISTRIBUTION'):
+                            _sm_score = _sm.get('score', 0)
+                            _sm_ok = ((_sm['verdict']=='ACCUMULATION' and _sm_score >= 3) or
+                                      (_sm['verdict']=='DISTRIBUTION' and _sm_score <= -3))
+                            if _sm_ok:
+                                _cd_key_sm = 'smart_money_' + sym
+                                _can_sm, _ = smart_alert_cooldown(_cd_key_sm, 'SMART_MONEY', ttl=21600)
+                                if _can_sm:
+                                    _vn_sm = (mkt == 'VN')
+                                    _pv_sm = data.get('price', 0)
+                                    _fp_sm = (str(round(_pv_sm)) + 'd') if _vn_sm else ('$' + str(round(_pv_sm,2)))
+                                    if _sm['verdict'] == 'ACCUMULATION':
+                                        _lvl_sm = 'INFO'
+                                        _title_sm = '💎 Smart money vao - ' + sym
+                                        _body_sm = 'ACCUMULATION score=' + str(round(_sm_score,1)) + ' · Gia: ' + _fp_sm
+                                    else:
+                                        _lvl_sm = 'WARNING'
+                                        _title_sm = '🎉 Smart money xa - ' + sym
+                                        _body_sm = 'DISTRIBUTION score=' + str(round(_sm_score,1)) + ' · Gia: ' + _fp_sm
+                                    push_live_alert(sym, mkt, _lvl_sm, _title_sm, _body_sm, action='Xem ' + sym, price=_pv_sm)
+                                    _tok_sm = get_setting('tg_token', '')
+                                    if _tok_sm:
+                                        _lbl_sm = _sm.get('verdict_label', _sm['verdict'])
+                                        _msg_sm = (_title_sm + '\n' + _body_sm + '\n' + _lbl_sm)
+                                        threading.Thread(target=tg_send_to_subscribers, args=(sym, _msg_sm), daemon=True).start()
+                    except Exception as _sme: log.debug('[smart money alert] %s: %s', sym, _sme)
+                    # Volume bat thuong alert
+                    try:
+                        if a.get('unusual_vol') and a.get('total', 0) >= 3:
+                            _vn_uv = (mkt == 'VN')
+                            _pv_uv = data.get('price', 0)
+                            _chg_uv = data.get('chg', 0)
+                            _vol_uv = data.get('vol', 0)
+                            _fp_uv = str(round(_pv_uv)) if _vn_uv else ('$'+str(round(_pv_uv,2)))
+                            _ok_uv, _ = smart_alert_cooldown('unusual_vol_'+sym, 'UNUSUAL_VOL', ttl=14400)
+                            if _ok_uv:
+                                push_live_alert(sym, mkt, 'INFO',
+                                    '📊 Volume bat thuong - ' + sym,
+                                    'KL dot bien · Score=' + str(a.get('total',0)) + ' · Gia: ' + _fp_uv + ' (' + str(round(_chg_uv,2)) + '%)',
+                                    action='Xem ' + sym, price=_pv_uv)
+                    except Exception as _uve: log.debug('[vol alert] %s: %s', sym, _uve)
                     # RSI Cuc tri alert (<=25 / >=75)
                     try:
                         _rv = a.get('rsi', 0)
@@ -11093,7 +11160,8 @@ _ML_RETRAIN_DAYS = 7    # retrain mỗi 7 ngày
 _ML_MIN_BARS     = 120  # tối thiểu để train
 
 _macro_cache  = {}
-_MACRO_TTL    = 3600    # 1 giờ
+_macro_vn_cache = {}  # cache for fetch_macro_vn_detail
+_MACRO_TTL    = 900     # 15 phút
 
 _COOLDOWN_SL   = 1800   # 30min for stop loss alerts
 _COOLDOWN_MTF  = 14400  # 4h for MTF alerts
@@ -12259,6 +12327,20 @@ def fetch_macro_data() -> dict:
                       c.execute("SELECT * FROM macro_cache").fetchall()}
     except: cached = {}
 
+    # Auto-clear cache entries quá cũ (> 6 giờ) để tránh hiển thị giá stale
+    stale_syms = []
+    for s, c in cached.items():
+        try:
+            age_h = (datetime.now() - datetime.fromisoformat(c['fetched_at'])).total_seconds() / 3600
+            if age_h > 6: stale_syms.append(s)
+        except: pass
+    if stale_syms:
+        try:
+            with get_db() as _cc:
+                for _ss in stale_syms:
+                    _cc.execute("DELETE FROM macro_cache WHERE symbol=?", (_ss,))
+            for _ss in stale_syms: cached.pop(_ss, None)
+        except: pass
     syms_to_fetch = [s for s, info in _MACRO_SYMBOLS.items()
                      if s not in cached or
                      (datetime.now() - datetime.fromisoformat(cached[s]['fetched_at'])).total_seconds() > _MACRO_TTL]
@@ -12315,6 +12397,13 @@ def fetch_macro_data() -> dict:
             if d and d.get('price', 0) > 0:
                 c = {'price': d['price'], 'chg_pct': d.get('chg', 0)}
         price = c.get('price', 0); chg = c.get('chg_pct', 0)
+        # Sanity check: bỏ qua giá 0 hoặc bất thường
+        _price_ok = price > 0
+        if sym == 'GC=F' and not (800 < price < 6000): _price_ok = False    # Gold: 800-6000 USD
+        if sym == '^GSPC' and not (1000 < price < 15000): _price_ok = False  # S&P: 1000-15000
+        if sym == 'DXY'   and not (50 < price < 200): _price_ok = False      # DXY: 50-200
+        if sym == 'CL=F'  and not (10 < price < 300): _price_ok = False      # Oil: 10-300
+        if not _price_ok: continue  # skip invalid
         results[sym] = {
             'symbol': sym, 'name': info['name'], 'icon': info['icon'],
             'price': round(price, 4), 'chg_pct': round(chg, 2),
@@ -12341,14 +12430,14 @@ def fetch_macro_data() -> dict:
     return results
 
 
-def fetch_macro_data():
+def fetch_macro_vn_detail():
     """
     Lấy dữ liệu macro: USD/VND, lãi suất liên ngân hàng, P/E VN-Index,
     margin debt (ước tính từ dữ liệu công khai).
     """
     now = time.time()
-    if _macro_cache.get('ts') and now - _macro_cache['ts'] < _MACRO_TTL:
-        return _macro_cache.get('data', {})
+    if _macro_vn_cache.get('ts') and now - _macro_vn_cache['ts'] < _MACRO_TTL:
+        return _macro_vn_cache.get('data', {})
     result = {}
     # 1. USD/VND — dùng yfinance USDVND=X
     try:
@@ -12423,10 +12512,9 @@ def fetch_macro_data():
     except Exception as _e: log.debug('[uncat] line %d: %%s' % 10206, _e)
 
     result['ts'] = datetime.now().isoformat()
-    _macro_cache['ts']   = now
-    _macro_cache['data'] = result
+    _macro_vn_cache['ts']   = now
+    _macro_vn_cache['data'] = result
     return result
-
 # ── get_macro_alert_context (from v12) ──
 
 def get_macro_alert_context():
@@ -13292,7 +13380,7 @@ def detect_smart_money(sym: str, mkt: str) -> dict:
                 'severity': 'MEDIUM',
             })
 
-    verdict = 'ACCUMULATION' if score >= 3 else               'DISTRIBUTION' if score <= -2 else               'NEUTRAL'
+    verdict = 'ACCUMULATION' if score >= 3 else               'DISTRIBUTION' if score <= -3 else               'NEUTRAL'
 
     return {
         'symbol': sym,
@@ -18220,28 +18308,63 @@ class Handler(BaseHTTPRequestHandler):
     
         # Pro GET routes added
         # ── Pro GET routes  ──────────────────────────
+        if path == "/api/macro/refresh":
+            _macro_cache.clear()
+            _macro_vn_cache.clear()
+            try: _b2 = fetch_macro_data()
+            except Exception: _b2 = {}
+            self.send_json({"ok": True, "keys": list(_b2.keys())}); return
         if path == "/api/macro":
             base = fetch_macro_data()
-            # Add structured index data for the header banner (price + chg_pct per symbol)
-            def _idx(sym, mkt):
+            # Merge VN detail (USD/VND, P/E, breadth, VN30 perf)
+            try:
+                _vnd = fetch_macro_vn_detail()
+                for _k in ("usdvnd","usdvnd_chg","vnindex","vnindex_52w_hi","vnindex_52w_lo",
+                           "vnindex_200ma","pe_estimate","pe_comment","breadth_total",
+                           "breadth_up","breadth_dn","breadth_pct","vn30_today_pct",
+                           "vn30_price","us_3m_rate"):
+                    if _k in _vnd: base[_k] = _vnd[_k]
+            except Exception as _mve: log.debug("[macro vnd] %s", _mve)
+            def _from_cache(sym):
                 d = _ram_cache.get(sym, {}).get('data', {})
                 if d and d.get('price', 0) > 0:
-                    return {'price': d.get('price', 0), 'chg_pct': d.get('chg', 0)}
+                    return {'price': round(d['price'], 4), 'chg_pct': round(d.get('chg', 0), 2)}
                 return None
-            # VN indices from RAM cache (fetched by refresh loop)
-            for _sym, _mkt in [('VNINDEX','VN'), ('VN30','VN'), ('HNX','VN')]:
-                idx_d = _idx(_sym, _mkt)
-                if idx_d:
-                    base[_sym] = idx_d
+            # VN Indices: cache → DB → live fetch (không cần thêm vào watchlist)
+            for _sym in ['VNINDEX', 'VN30', 'HNX']:
+                _d = _from_cache(_sym)
+                if not _d:
+                    try:
+                        _bars = db_load_ohlcv(_sym, 3)
+                        if _bars and len(_bars) >= 2:
+                            _p = _bars[-1]['c']; _pv = _bars[-2]['c']
+                            _d = {'price': round(_p, 4), 'chg_pct': round((_p-_pv)/_pv*100, 2) if _pv else 0}
+                    except Exception: pass
+                if not _d:
+                    try:
+                        _raw = fetch(_sym, 'VN')
+                        if _raw and _raw.get('price', 0) > 0:
+                            _d = {'price': round(_raw['price'], 4), 'chg_pct': round(_raw.get('chg', 0), 2)}
+                    except Exception: pass
+                if _d:
+                    base[_sym] = _d
                 elif _sym == 'VNINDEX' and base.get('vnindex'):
-                    # fallback from fetch_macro_data structure
                     base['VNINDEX'] = {'price': base['vnindex'], 'chg_pct': base.get('vnindex_chg', 0)}
-            # S&P500 and Gold from yfinance via RAM cache or macro data
-            for _sym, _mkt, _key in [('^GSPC','US','SPX'), ('GC=F','US','GOLD'), ('SPY','US','SPY')]:
-                idx_d = _idx(_sym, _mkt) or _idx(_key, _mkt)
-                if idx_d:
-                    base[_key] = idx_d
-                    base['^GSPC' if _key == 'SPX' else _sym] = idx_d
+            # S&P500 aliases: ^GSPC ↔ SPX
+            if '^GSPC' in base and 'SPX' not in base: base['SPX'] = base['^GSPC']
+            if 'SPX' in base and '^GSPC' not in base: base['^GSPC'] = base['SPX']
+            # Gold alias: GC=F ↔ GOLD
+            if 'GC=F' in base and 'GOLD' not in base: base['GOLD'] = base['GC=F']
+            # Fallback S&P500 từ _ram_cache (nếu user thêm SPY/^GSPC vào watchlist)
+            for _us in ['^GSPC', 'SPY']:
+                _d = _from_cache(_us)
+                if _d and not base.get('^GSPC', {}).get('price'):
+                    base['^GSPC'] = _d; base['SPX'] = _d
+            # Fallback Gold từ _ram_cache (GC=F hoặc XAUUSD)
+            for _g in ['GC=F', 'XAUUSD']:
+                _d = _from_cache(_g)
+                if _d and not base.get('GC=F', {}).get('price'):
+                    base['GC=F'] = _d; base['GOLD'] = _d
             self.send_json(base); return
         # v27: Signal performance stats
         if path.startswith("/api/signal_stats"):
