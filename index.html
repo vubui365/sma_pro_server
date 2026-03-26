@@ -1015,7 +1015,7 @@ body.light{
       🔔
       <span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;background:#f03050;color:#fff;font-size:8px;font-weight:800;border-radius:50%;width:14px;height:14px;line-height:14px;text-align:center;pointer-events:none">0</span>
     </button>
-    <button class="ibtn" onclick="testAlertBanner()" title="Test banner thông báo (debug)" style="font-size:9px;opacity:.5">🧪</button>
+    <button class="ibtn" onclick="testAlertBanner()" title="Test banner thông báo (debug)" style="font-size:9px;opacity:.5;display:none">🧪</button>
     <button id="settingsBtn" class="ibtn" onclick="openSettings()" title="Cài đặt Telegram">⚙️</button>
     <button class="ibtn" onclick="toggleTheme()" id="thbtn">☀️</button>
   </div>
@@ -1068,7 +1068,7 @@ body.light{
     <div id="idx-HNX-chg" style="font-size:10px;font-weight:700">--%</div>
   </div>
   <div style="display:flex;align-items:center;gap:5px;padding:5px 11px;border-right:1px solid var(--border);flex-shrink:0">
-    <div><div style="font-size:8px;color:var(--sub);font-weight:700;line-height:1">S&P500</div><div id="idx-SPX-price" style="font-size:12px;font-weight:800;font-family:var(--mono);line-height:1.3">--</div></div>
+    <div><div style="font-size:8px;color:var(--sub);font-weight:700;line-height:1">SPY ETF</div><div id="idx-SPX-price" style="font-size:12px;font-weight:800;font-family:var(--mono);line-height:1.3">--</div></div>
     <div id="idx-SPX-chg" style="font-size:10px;font-weight:700">--%</div>
   </div>
   <div style="display:flex;align-items:center;gap:5px;padding:5px 11px;flex-shrink:0">
@@ -2857,10 +2857,11 @@ async function api(m,p,b){
       console.warn('[api] error:',m,p,e.message)
       // Hiện toast cho lỗi mạng (không spam — chỉ 1 lần mỗi 10s)
       const _now = Date.now()
-      if(!window._lastNetErrToast || _now - window._lastNetErrToast > 10000){
+      if(!window._lastNetErrToast || _now - window._lastNetErrToast > 60000){
         window._lastNetErrToast = _now
-        if(typeof toast === 'function' && !p.includes('live_alerts') && !p.includes('status')){
-          toast('⚠️ Mất kết nối server. Đang thử lại...', 'error', 4000)
+        const _skipPaths=['live_alerts','status','daily_briefing','macro','market_regime','pattern_scan','intraday','briefing']
+        if(typeof toast==='function' && !_skipPaths.some(s=>p.includes(s))){
+          toast('⚠️ Mất kết nối server. Đang thử lại...','error',3000)
         }
       }
     }
@@ -3139,7 +3140,6 @@ async function init(){
     const s2=await api('GET','/api/status').catch(()=>({vn_queue:0}))
     const el=document.getElementById('vnsbar')
     if(el){if(s2.vn_queue>0){el.style.display='block';const _vt=document.getElementById('vns-txt');if(_vt)_vt.textContent='VN Queue: '+s2.vn_queue+' mã đang chờ...'}else{el.style.display='none'}}
-    else el.style.display='none'
   },3000)
   // Close search dropdown on outside click
   document.addEventListener('click',e=>{if(!document.getElementById('sw').contains(e.target))document.getElementById('sdrop').classList.remove('show')})
@@ -13878,6 +13878,20 @@ function deleteSavedIndicator(id) {
     }
   }
 })()
+
+
+// addToWL: thêm mã vào watchlist từ AI suggestions / screener
+async function addToWL(sym, mkt) {
+  if(!sym) return
+  const r = await api('POST', '/api/watchlist', {symbol: sym.toUpperCase(), market: mkt||'VN'}).catch(()=>null)
+  if(r && (r.ok || r.message)) {
+    toast('✅ Đã thêm ' + sym + ' vào watchlist', 'success', 3000)
+    const data = await api('GET', '/api/watchlist').catch(()=>[])
+    if(Array.isArray(data)) { wl = data; renderTable() }
+  } else {
+    toast('⚠️ ' + sym + ' đã có hoặc lỗi thêm', 'warn', 2500)
+  }
+}
 
 </script>
 </body>

@@ -18,7 +18,10 @@ import base64
 import concurrent.futures
 import urllib.parse
 import urllib.request
-import websocket
+try:
+    import websocket
+except ImportError:
+    websocket = None
 import qrcode
 import pyotp
 try:
@@ -37,18 +40,18 @@ except ImportError:
     REDIS_CLIENT = None  # will be re-set after auto-install
 
 # WebSocket config
-ENABLE_WEBSOCKET = True
+ENABLE_WEBSOCKET = os.environ.get('RENDER') is None  # Tắt WS trên Render
 WS_PORT = 10000
 
 # ── CONFIGURATION ─────────────────────────────────────────────
-PORT = 11349
+PORT = int(os.environ.get('PORT', 13499))
+BIND = "0.0.0.0"
 VERSION = "Pro"
 ALERT_CD_1D=3600; ALERT_CD_MTF=14400; ALERT_CD_SL=7200; ALERT_CD_TP=7200
 ALERT_CD_VOL=3600; ALERT_CD_REGIME=7200
 WACC_VN_DEFAULT=0.12; WACC_US_DEFAULT=0.09
 DAILY_DIGEST_HOUR = 17   # giờ gửi digest (17:30 VN)
 DAILY_DIGEST_MIN  = 30
-BIND = "127.0.0.1"
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sma.db")
 OHLCV_BARS = 2000
 
@@ -5842,7 +5845,7 @@ def fetch_intraday_vn(symbol, interval='5m'):
 def fetch_intraday_us(symbol, interval='5m'):
     try:
         import yfinance as yf
-        period_map = {'1m':'1d','5m':'5d','15m':'5d','30m':'1mo'}
+        period_map = {'1m':'1d','5m':'5d','15m':'5d','30m':'1mo','60m':'1mo','1h':'1mo','1H':'1mo','2h':'3mo','4h':'3mo','4H':'3mo','1d':'1y','1D':'1y'}
         tf = period_map.get(interval, '5d')
         tk = yf.Ticker(symbol)
         df = tk.history(period=tf, interval=interval)
@@ -18364,7 +18367,12 @@ class Handler(BaseHTTPRequestHandler):
             for _g in ['GC=F', 'XAUUSD']:
                 _d = _from_cache(_g)
                 if _d and not base.get('GC=F', {}).get('price'):
-                    base['GC=F'] = _d; base['GOLD'] = _d
+                    _gp = _d.get('price', 0)
+                    # Sanity: Gold giá hợp lý 1500-5000 USD
+                    if 1500 <= _gp <= 5000:
+                        base['GC=F'] = _d; base['GOLD'] = _d
+                    else:
+                        log.debug("[macro] Gold price %.1f ngoài range, bỏ qua", _gp)
             self.send_json(base); return
         # v27: Signal performance stats
         if path.startswith("/api/signal_stats"):
@@ -19013,11 +19021,14 @@ class Handler(BaseHTTPRequestHandler):
             mkt2     = qs.get("market", ["VN"])[0].upper()
             interval = qs.get("interval", ["1H"])[0]
             limit    = int(qs.get("limit", ["300"])[0])
+            # Normalize interval aliases
+            _iv_map = {'1H':'60m','4H':'4h','1D':'1d','15M':'15m','30M':'30m','5M':'5m','1M':'1m'}
+            interval_norm = _iv_map.get(interval, interval)
             try:
                 if mkt2 == "VN":
-                    bars = fetch_intraday_vn(sym2, interval, limit)
+                    bars = fetch_intraday_vn(sym2, interval_norm, limit)
                 else:
-                    bars = fetch_intraday_us(sym2, interval, limit)
+                    bars = fetch_intraday_us(sym2, interval_norm, limit)
                 # Phân tích MTF intraday nếu đủ data
                 mtf_intraday = {}
                 if bars and len(bars) >= 20:
@@ -22498,7 +22509,8 @@ def main():
         _SCHEDULER.start()
         print("[SMA Pro] Real-time feed + scheduler started")
     # Auto-open browser
-    threading.Thread(  # main browser thread
+    if os.environ.get('RENDER') is None:
+    threading.Thread(
         target=lambda: (time.sleep(1.5), webbrowser.open(f"http://localhost:{PORT}")),
         daemon=True
     ).start()
