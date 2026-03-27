@@ -22496,6 +22496,35 @@ def main():
     loaded = preload_from_db()
     if loaded == 0:
         print("[SMA] DB trống — sẽ fetch từ API khi thêm mã đầu tiên")
+
+    # Trên Render: auto-fetch dữ liệu mới ngay khi startup
+    if os.environ.get('RENDER'):
+        def _render_startup_fetch():
+            time.sleep(10)  # Chờ server start xong
+            print("[SMA] Render startup: đang fetch dữ liệu mới...")
+            try:
+                with get_db() as c:
+                    rows = c.execute(
+                        "SELECT DISTINCT symbol, market FROM user_watchlist LIMIT 20"
+                    ).fetchall()
+                if not rows:
+                    with get_db() as c:
+                        rows = c.execute(
+                            "SELECT symbol, market FROM watchlist LIMIT 20"
+                        ).fetchall()
+                for r in rows:
+                    try:
+                        data = fetch(r['symbol'], r['market'])
+                        if data:
+                            a = analyze(data)
+                            data['analysis'] = a
+                            _ram_cache[r['symbol']] = {'ts': time.time(), 'data': data}
+                            print(f"[SMA] ✅ Fetched {r['symbol']}")
+                    except Exception as _fe:
+                        log.debug("[startup_fetch] %s: %s", r['symbol'], _fe)
+            except Exception as _se:
+                log.error("[startup_fetch] %s", _se)
+        threading.Thread(target=_render_startup_fetch, daemon=True).start()
     
     # Start WebSocket
     if ENABLE_WEBSOCKET:
