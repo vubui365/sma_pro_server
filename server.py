@@ -22510,10 +22510,10 @@ def main():
         print("[SMA Pro] Real-time feed + scheduler started")
     # Auto-open browser
     if os.environ.get('RENDER') is None:
-    threading.Thread(
-        target=lambda: (time.sleep(1.5), webbrowser.open(f"http://localhost:{PORT}")),
-        daemon=True
-    ).start()
+        threading.Thread(
+            target=lambda: (time.sleep(1.5), webbrowser.open(f"http://localhost:{PORT}")),
+            daemon=True
+        ).start()
     
     # Seed investment screener on first startup
     def _seed_invest():
