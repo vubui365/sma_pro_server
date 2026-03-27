@@ -44,7 +44,7 @@ ENABLE_WEBSOCKET = os.environ.get('RENDER') is None  # Tắt WS trên Render
 WS_PORT = 10000
 
 # ── CONFIGURATION ─────────────────────────────────────────────
-PORT = int(os.environ.get('PORT', 13499))
+PORT = int(os.environ.get('PORT', 11349))
 BIND = "0.0.0.0"
 VERSION = "Pro"
 ALERT_CD_1D=3600; ALERT_CD_MTF=14400; ALERT_CD_SL=7200; ALERT_CD_TP=7200
@@ -58,7 +58,7 @@ OHLCV_BARS = 2000
 # ── AUTO INSTALL ──────────────────────────────────────────────
 def pip(*pkgs):
     subprocess.check_call([sys.executable,"-m","pip","install",*pkgs,"-q"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # Core dependencies
 required = ['yfinance', 'requests', 'numpy', 'pandas', 'scikit-learn', 'websockets', 'redis', 'pytest', 'scipy']
