@@ -53,7 +53,8 @@ WACC_VN_DEFAULT=0.12; WACC_US_DEFAULT=0.09
 DAILY_DIGEST_HOUR = 17   # giờ gửi digest (17:30 VN)
 DAILY_DIGEST_MIN  = 30
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sma.db")
-OHLCV_BARS = 2000
+#OHLCV_BARS = 2000
+OHLCV_BARS = int(os.environ.get('OHLCV_BARS', 500))
 
 # ── AUTO INSTALL ──────────────────────────────────────────────
 def pip(*pkgs):
@@ -20007,7 +20008,7 @@ class Handler(BaseHTTPRequestHandler):
 # ═══════════════════════════════════════════════════════════
 
 _HAS_LGBM=False
-try: import lightgbm as lgb; _HAS_LGBM=True; log.info("[ML] LightGBM OK")
+try: import lightgbm as lgb; _HAS_LGBM=False;#_HAS_LGBM=True; 
 except ImportError: pass
 
 SECTOR_GROUPS_VN={
@@ -22486,7 +22487,9 @@ def main():
     
     _check_and_fix_db()
     init_db()
-    threading.Thread(target=_pre_warm_cache, daemon=True).start()
+    #threading.Thread(target=_pre_warm_cache, daemon=True).start()
+    if os.environ.get('RENDER') is None:
+        threading.Thread(target=_pre_warm_cache, daemon=True).start()
     threading.Thread(target=_wal_checkpoint_worker, daemon=True).start()
     threading.Thread(target=backup_worker, daemon=True).start()
     _check_default_password()
